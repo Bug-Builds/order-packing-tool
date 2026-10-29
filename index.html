@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Packing Recorder</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--tx:#14171c;--mute:#6a7280;--bd:#d9dde3;--ac:#1d6fe8;--rec:#d93025;--ok:#188038;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#101319;--card:#1a1f28;--tx:#eef1f5;--mute:#98a1b0;--bd:#2c3340;--ac:#5b9bff;--rec:#ff5a4d;--ok:#4cc27a;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#101319;--card:#1a1f28;--tx:#eef1f5;--mute:#98a1b0;--bd:#2c3340;--ac:#5b9bff;--rec:#ff5a4d;--ok:#4cc27a;color-scheme:dark}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--tx);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:640px;margin:0 auto;padding:12px}
+h1{font-size:18px;margin:4px 0 10px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:12px;margin-bottom:12px}
+.step{display:flex;gap:6px;font-size:12px;color:var(--mute);margin-bottom:10px}
+.step span{flex:1;text-align:center;padding:6px 2px;border-radius:8px;border:1px solid var(--bd)}
+.step span.on{background:var(--ac);color:#fff;border-color:var(--ac)}
+.step span.done{color:var(--ok);border-color:var(--ok)}
+.vid{position:relative;background:#000;border-radius:12px;overflow:hidden;aspect-ratio:16/9}
+canvas{width:100%;height:100%;display:block;object-fit:contain}
+video{display:none}
+.badge{position:absolute;top:8px;right:8px;background:rgba(0,0,0,.6);color:#fff;font-size:13px;padding:4px 10px;border-radius:20px;display:none}
+.badge.on{display:block}.badge b{color:#ff5a4d}
+.msg{position:absolute;inset:auto 8px 8px 8px;background:rgba(0,0,0,.65);color:#fff;font-size:13px;padding:6px 10px;border-radius:8px;text-align:center}
+.row{display:flex;gap:8px;margin-top:10px}
+input{flex:1;min-width:0;font-size:18px;padding:12px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--tx)}
+button{font:inherit;font-weight:600;border:0;border-radius:10px;padding:12px 16px;background:var(--ac);color:#fff;cursor:pointer}
+button.sec{background:transparent;color:var(--tx);border:1px solid var(--bd)}
+button.big{flex:1;font-size:18px;padding:16px}
+button.rec{background:var(--rec)}
+button:disabled{opacity:.45}
+.awb{font-size:22px;font-weight:700;letter-spacing:.5px;word-break:break-all}
+.mute{color:var(--mute);font-size:13px}
+.item{display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--bd);font-size:14px}
+.item:first-child{border-top:0}
+.item .n{flex:1;min-width:0;word-break:break-all}
+.item small{display:block;color:var(--mute)}
+.item button{padding:8px 12px;font-size:13px}
+.ok{color:var(--ok)}
+</style>
+</head>
+<body>
+<main>
+<h1>📦 Packing Recorder</h1>
+<div class="step" id="steps"><span data-s="1">1 · Scan AWB</span><span data-s="2">2 · Record</span><span data-s="3">3 · Save</span></div>
+
+<div class="card">
+  <div class="vid">
+    <canvas id="cv" width="1280" height="720"></canvas>
+    <video id="vd" playsinline muted></video>
+    <div class="badge" id="badge"><b>●</b> <span id="tm">00:00</span></div>
+    <div class="msg" id="msg">Tap “Start camera” to begin</div>
+  </div>
+  <div class="row" id="rowCam"><button class="big" id="btnCam">Start camera</button></div>
+  <div id="scanBox" style="display:none">
+    <div class="row">
+      <input id="awbIn" placeholder="Scan or type AWB, then Enter" autocomplete="off" autocapitalize="characters" inputmode="text">
+      <button id="btnSet" class="sec">Set</button>
+    </div>
+    <div class="mute" style="margin-top:6px" id="hint"></div>
+  </div>
+  <div id="recBox" style="display:none">
+    <div class="mute">Current AWB</div>
+    <div class="awb" id="awbShow">—</div>
+    <div class="mute" id="fname"></div>
+    <div class="row">
+      <button class="big" id="btnRec">● Start recording</button>
+      <button class="sec" id="btnCancel">Change AWB</button>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <strong>Today’s packed shipments</strong>
+    <button class="sec" id="btnCsv" style="padding:6px 10px;font-size:13px">Export log CSV</button>
+  </div>
+  <div id="log" class="mute" style="margin-top:6px">Nothing recorded yet.</div>
+</div>
+<div class="mute">Tip: after saving, point Google Photos / Drive auto-backup at the folder where your phone stores these videos. Every file is named by its AWB.</div>
+</main>
+
+<script>
+(function(){
+const $=id=>document.getElementById(id);
+const cv=$('cv'),ctx=cv.getContext('2d'),vd=$('vd');
+let stream=null,state='idle',awb='',rec=null,chunks=[],t0=0,tick=null,mime='',ext='webm',det=null;
+const log=[];
+const pad=n=>String(n).padStart(2,'0');
+const stamp=d=>`${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+const safe=s=>s.replace(/[^A-Za-z0-9_-]/g,'_');
+
+// persisted metadata (storage can be empty/blocked)
+try{const s=JSON.parse(localStorage.getItem('pk_log')||'[]');const today=new Date().toDateString();s.filter(x=>new Date(x.ts).toDateString()===today).forEach(x=>log.push(x))}catch(e){}
+function persist(){try{localStorage.setItem('pk_log',JSON.stringify(log.map(({blob,...r})=>r)))}catch(e){}}
+
+function setState(s){
+  state=s;
+  $('scanBox').style.display=s==='scan'?'block':'none';
+  $('recBox').style.display=(s==='ready'||s==='rec')?'block':'none';
+  $('rowCam').style.display=s==='idle'?'flex':'none';
+  $('badge').classList.toggle('on',s==='rec');
+  $('btnCancel').disabled=s==='rec';
+  const b=$('btnRec');
+  b.textContent=s==='rec'?'■ Stop & save':'● Start recording';
+  b.className='big'+(s==='rec'?' rec':'');
+  document.querySelectorAll('#steps span').forEach(el=>{
+    const n=+el.dataset.s,cur=s==='scan'?1:s==='ready'||s==='rec'?2:0;
+    el.className=n<cur?'done':n===cur?'on':'';
+  });
+  if(s==='scan'){$('awbIn').value='';setTimeout(()=>$('awbIn').focus(),50);msg(det?'Point camera at the AWB barcode':'Scan with your scanner or type the AWB')}
+  if(s==='ready')msg('AWB set. Press Start recording');
+  if(s==='rec')msg('');
+}
+function msg(t){const m=$('msg');m.textContent=t;m.style.display=t?'block':'none'}
+
+async function startCam(){
+  try{
+    const base={video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}}};
+    try{stream=await navigator.mediaDevices.getUserMedia({...base,audio:true})}
+    catch(e){stream=await navigator.mediaDevices.getUserMedia({...base,audio:false})}
+    vd.srcObject=stream;await vd.play();
+    cv.width=vd.videoWidth||1280;cv.height=vd.videoHeight||720;
+    if('BarcodeDetector' in window){
+      try{det=new BarcodeDetector({formats:['code_128','code_39','code_93','ean_13','ean_8','itf','codabar','upc_a','qr_code','data_matrix']})}catch(e){det=null}
+    }
+    $('hint').textContent=det?'Camera barcode scan is on. A USB/Bluetooth scanner or manual typing also works.':'This browser can’t scan via camera. Use a USB/Bluetooth scanner or type the AWB.';
+    draw();setInterval(detect,300);setState('scan');
+  }catch(e){msg('Camera blocked: '+(e.message||e.name)+'. Allow camera permission and retry.');$('btnCam').textContent='Retry camera'}
+}
+
+function draw(){
+  if(vd.readyState>=2)ctx.drawImage(vd,0,0,cv.width,cv.height);
+  const h=Math.round(cv.height/22);
+  ctx.font=`600 ${h}px system-ui,sans-serif`;ctx.textBaseline='top';
+  const lines=[stamp(new Date())];if(awb)lines.push('AWB: '+awb);
+  const w=Math.max(...lines.map(l=>ctx.measureText(l).width))+h;
+  ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,w,lines.length*h*1.25+h*.4);
+  ctx.fillStyle='#fff';lines.forEach((l,i)=>ctx.fillText(l,h/2,h*.3+i*h*1.25));
+  requestAnimationFrame(draw);
+}
+
+let busy=false;
+async function detect(){
+  if(state!=='scan'||!det||busy||vd.readyState<2)return;
+  busy=true;
+  try{const r=await det.detect(vd);if(r.length&&r[0].rawValue)setAwb(r[0].rawValue)}catch(e){}
+  busy=false;
+}
+
+function beep(){try{const a=new (window.AudioContext||window.webkitAudioContext)(),o=a.createOscillator();o.frequency.value=1000;o.connect(a.destination);o.start();o.stop(a.currentTime+.12)}catch(e){}try{navigator.vibrate&&navigator.vibrate(80)}catch(e){}}
+
+function fileBase(a){
+  const base=safe(a);const n=log.filter(l=>l.awb===a).length;
+  return n?`${base}_${n+1}`:base;
+}
+function setAwb(v){
+  v=v.trim();if(!v)return;
+  awb=v;beep();
+  $('awbShow').textContent=awb;
+  const dup=log.some(l=>l.awb===awb);
+  $('fname').textContent='File: '+fileBase(awb)+'.'+ext+(dup?'  ⚠ AWB already recorded today':'');
+  setState('ready');
+}
+$('btnSet').onclick=()=>setAwb($('awbIn').value);
+$('awbIn').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();setAwb($('awbIn').value)}});
+$('btnCam').onclick=startCam;
+$('btnCancel').onclick=()=>{awb='';setState('scan')};
+
+function pickMime(){
+  const c=['video/mp4;codecs=avc1,mp4a.40.2','video/mp4','video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
+  for(const m of c){if(window.MediaRecorder&&MediaRecorder.isTypeSupported(m))return m}
+  return '';
+}
+
+function startRec(){
+  mime=pickMime();ext=mime.includes('mp4')?'mp4':'webm';
+  const cs=cv.captureStream(25);
+  stream.getAudioTracks().forEach(t=>cs.addTrack(t));
+  chunks=[];
+  rec=new MediaRecorder(cs,mime?{mimeType:mime,videoBitsPerSecond:2500000}:undefined);
+  rec.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data)};
+  const item={awb,name:fileBase(awb),ext,ts:Date.now(),dur:0,saved:false};
+  rec.onstop=()=>{
+    item.blob=new Blob(chunks,{type:mime||'video/webm'});
+    item.dur=Math.round((Date.now()-t0)/1000);
+    log.unshift(item);
+    log.forEach((l,i)=>{if(i>=8)delete l.blob});
+    persist();renderLog();
+    save(item);
+    awb='';setState('scan');
+  };
+  rec.start(1000);t0=Date.now();
+  tick=setInterval(()=>{const s=Math.floor((Date.now()-t0)/1000);$('tm').textContent=pad(Math.floor(s/60))+':'+pad(s%60)},500);
+  $('tm').textContent='00:00';
+  setState('rec');
+}
+function stopRec(){clearInterval(tick);if(rec&&rec.state!=='inactive')rec.stop()}
+$('btnRec').onclick=()=>state==='rec'?stopRec():startRec();
+
+function dlBlob(name,blob){
+  const u=URL.createObjectURL(blob),a=document.createElement('a');
+  a.href=u;a.download=name;document.body.appendChild(a);a.click();
+  setTimeout(()=>{a.remove();URL.revokeObjectURL(u)},4000);
+}
+async function save(item){
+  if(!item.blob){msg('Video no longer in memory');return}
+  try{dlBlob(item.name+'.'+item.ext,item.blob);item.saved=true;persist();msg('Saved '+item.name+'.'+item.ext)}
+  catch(e){msg('Save failed: '+((e&&e.message)||e))}
+  renderLog();
+}
+
+function renderLog(){
+  const el=$('log');
+  if(!log.length){el.textContent='Nothing recorded yet.';return}
+  el.innerHTML='';
+  log.forEach(l=>{
+    const d=document.createElement('div');d.className='item';
+    const n=document.createElement('div');n.className='n';
+    n.textContent=l.name+'.'+l.ext;
+    const s=document.createElement('small');
+    s.textContent=new Date(l.ts).toLocaleTimeString()+' · '+l.dur+'s · '+(l.saved?'saved':'not saved');
+    if(l.saved)s.className='ok';
+    n.appendChild(s);d.appendChild(n);
+    if(l.blob){const b=document.createElement('button');b.className='sec';b.textContent=l.saved?'Save again':'Save';b.onclick=()=>save(l);d.appendChild(b)}
+    el.appendChild(d);
+  });
+}
+$('btnCsv').onclick=()=>{
+  if(!log.length)return;
+  const rows=['awb,filename,time,duration_s,saved'].concat(log.map(l=>[l.awb,l.name+'.'+l.ext,new Date(l.ts).toISOString(),l.dur,l.saved].join(',')));
+  dlBlob('packing-log-'+new Date().toISOString().slice(0,10)+'.csv',new Blob([rows.join('\n')],{type:'text/csv'}));
+};
+renderLog();setState('idle');
+})();
+</script>
+</body>
+</html>
